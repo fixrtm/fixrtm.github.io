@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+
+<style>
+    table {
+        border-collapse: collapse;
+    }
+    td, th {
+        margin: 0;
+        padding: 5px;
+    }
+    td + td, th + th {
+        border-left: solid black 1px;
+    }
+
+    tbody > tr {
+        border-top: solid black 1px;
+    }
+    caption {
+        position: sticky;
+        top: 0;
+        z-index: 2;
+        text-align: left;
+        background: white;
+        padding: 0.83em 0;
+        font-size: 1.5em;
+        font-weight: bold;
+    }
+    th {
+        position: sticky;
+        top: calc(0.83em * 2 + 2.7em);
+        /* tbody内のセルより手前に表示する */
+        z-index: 1;
+        background-color: white;
+    }
+    .center {
+        text-align: center;
+    }
+</style>
+<script src="./external/pako.es5.min.js"></script>
+
+<h1>FixRTM Crash Report ModelPack information parser</h1>
+
+<div id="file-accept">
+  Please choose file or drop crash report here: <input type="file" id="file">
+</div>
+<div id="status-reading-file" hidden>
+  Reading file...
+</div>
+<div id="status-parsing-file" hidden>
+  Parsing file...
+</div>
+<div id="output-area" hidden>
+</div>
+
+<script>
+    const preEB = "-----BEGIN REAL TRAIN MOD MODEL PACK INFORMATION-----"
+    const postEB = "-----END REAL TRAIN MOD MODEL PACK INFORMATION-----"
+
+    const accept = document.getElementById("file-accept")
+    const statusReadingFile = document.getElementById("status-reading-file")
+    const statusParsing = document.getElementById("status-parsing-file")
+    const outputArea = document.getElementById("output-area")
+
+    /** @type HTMLInputElement */
+    const file = document.getElementById("file")
+    file.addEventListener("change", () => {
+        const inputFile = file.files[0];
+        accept.hidden = true;
+        statusReadingFile.hidden = false;
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            statusReadingFile.hidden = true;
+            statusParsing.hidden = false;
+            setTimeout(() => {
+                parseFile(e.target.result)
+            }, 10);
+        }
+        reader.readAsBinaryString(inputFile);
+    })
+
+    /**
+     * @param binStr {string} binaryString
+     */
+    function parseFile(binStr) {
+        try {
+            const preEBAt = binStr.indexOf(preEB);
+            if (preEBAt < 0) return alert("invalid crash report: preEB not found");
+            const postEBAt = binStr.indexOf(postEB, preEBAt);
+            if (postEBAt < 0) return alert("invalid crash report: postEBAt not found");
+            const base64 = binStr.substring(preEBAt + preEB.length, postEBAt);
+            const data = b2Uint8Array(atob(base64.replace(/\s+/g, '')));
+            const gunziped = pako.ungzip(data);
+            const json = (new TextDecoder('utf-8')).decode(gunziped);
+            const obj = JSON.parse(json);
+            const version = obj[0]
+
+            switch (version) {
+                case 1:
+                    parseVersion1(obj)
+                    break
+                default:
+                    return alert(`invalid crash report: unsupported version: ${version}`);
+            }
+            statusParsing.hidden = true;
+            outputArea.hidden = false;
+        } catch (e) {
+            return alert(`invalid crash report: unexpected error: ${e}`);
+        }
+    }
+
+    function parseVersion1(obj) {
+        // format information copied from fixrtm
+        /*
+        the json formant
+        [version, value]
+        // v1.0 format
+        [1,Map<model_pack:String,List<ModelPack>>]
+        ModelPack=[state:string,id:string,sourceName:string,includedInSMP:boolean]
+         */
+        const data = obj[1]
+        for (const [modelPack, models] of Object.entries(data)) {
+            const tbody = makeElement("tbody")
+            outputArea.appendChild(makeElement("table", {
+                children: [
+                    makeElement("caption", { text: modelPack }),
+                    makeElement("thead", {
+                        children: [
+                            makeElement("tr", {
+                                children: [
+                                    makeElement("th", {text: "Id"}),
+                                    makeElement("th", {text: "State"}),
+                                    makeElement("th", {text: "source file"}),
+                                    makeElement("th", {text: "IncludedInSMP", classes: "center"}),
+                                ],
+                            }),
+                        ],
+                    }),
+                    tbody,
+                ],
+            }));
+
+            for (const model of models) {
+                tbody.appendChild(makeElement("tr", {
+                    children: [
+                        makeElement("td", {text: model[1]}),
+                        makeElement("td", {text: model[0]}),
+                        makeElement("td", {text: model[2]}),
+                        makeElement("td", {text: `${model[3]}`, classes: "center"}),
+                    ],
+                }));
+            }
+        }
+    }
+
+    function makeElement(name, config) {
+        const element = document.createElement(name)
+        if (config?.text)
+            element.textContent = config.text
+        if (config?.children)
+            for (const child of config.children) element.appendChild(child)
+        if (config?.classes)
+            element.classList.add(config.classes.split(' '))
+        return element
+    }
+
+    /**
+     * @param binStr {string} binary string
+     * @returns {Uint8Array}
+     */
+    function b2Uint8Array(binStr) {
+        const len = binStr.length;
+        const bytes = new Uint8Array(len);
+        for (let i = 0; i < len; i++) {
+            bytes[i] = binStr.charCodeAt(i);
+        }
+        return bytes;
+    }
+</script>
